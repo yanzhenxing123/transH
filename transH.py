@@ -14,15 +14,17 @@ import pandas as pd
 train_data = [
     ('entity1', 'relation1', 'entity2'),
     ('entity3', 'relation2', 'entity4'),
-    # ...
+    ('entity3', 'relation2', 'entity5'),
 ]
 
-entity_dict = {'entity1': 0, 'entity2': 1, 'entity3': 2, 'entity4': 3}
+entity_dict = {'entity1': 0, 'entity2': 1, 'entity3': 2, 'entity4': 3, "entity5": 4}
 relation_dict = {'relation1': 0, 'relation2': 1}
 
 embedding_dim = 50
+num_entities = 5
 num_relations = 2
 margin = 1.0
+
 
 
 class TransH(nn.Module):
@@ -59,37 +61,31 @@ class TransH(nn.Module):
         tail_normal_vectors = self.entity_normal_vectors(tail_entities)
 
         # TransH的投影操作
-        head_proj = head_embeddings - torch.sum(head_embeddings * head_normal_vectors, dim=-1,
-                                                keepdim=True) * head_normal_vectors
-        tail_proj = tail_embeddings - torch.sum(tail_embeddings * tail_normal_vectors, dim=-1,
-                                                keepdim=True) * tail_normal_vectors
-        relation_proj = relation_embeddings - torch.sum(relation_embeddings * relation_normal_vectors, dim=-1,
-                                                        keepdim=True) * relation_normal_vectors
+        self.head_proj = head_embeddings - torch.sum(
+            head_embeddings * head_normal_vectors, dim=-1, keepdim=True
+        ) * head_normal_vectors
+        self.tail_proj = tail_embeddings - torch.sum(
+            tail_embeddings * tail_normal_vectors, dim=-1, keepdim=True
+        ) * tail_normal_vectors
+        self.relation_proj = relation_embeddings - torch.sum(
+            relation_embeddings * relation_normal_vectors, dim=-1, keepdim=True
+        ) * relation_normal_vectors
 
         # 计算头尾实体之间的关系得分
-        scores = torch.norm(head_proj + relation_proj - tail_proj, p=2, dim=-1)
+        scores = torch.norm(self.head_proj + self.relation_proj - self.tail_proj, p=2, dim=-1)
 
         return scores
 
     def predict(self, head_entities, relations, tail_entities):
-        head_embeddings = self.entity_embeddings(head_entities)
-        relation_embeddings = self.relation_embeddings(relations)
-        tail_embeddings = self.entity_embeddings(tail_entities)
-
-        # 获取实体和关系的法向量
-        head_normal_vectors = self.entity_normal_vectors(head_entities)
-        relation_normal_vectors = self.relation_normal_vectors(relations)
-        tail_normal_vectors = self.entity_normal_vectors(tail_entities)
-
-        # TransH的投影操作
-        head_proj = head_embeddings - torch.sum(head_embeddings * head_normal_vectors, dim=-1,
-                                                keepdim=True) * head_normal_vectors
-        tail_proj = tail_embeddings - torch.sum(tail_embeddings * tail_normal_vectors, dim=-1,
-                                                keepdim=True) * tail_normal_vectors
-        relation_proj = relation_embeddings - torch.sum(relation_embeddings * relation_normal_vectors, dim=-1,
-                                                        keepdim=True) * relation_normal_vectors
-
-        return head_proj, tail_proj, relation_proj
+        """
+        模型训练完成后进行预测
+        :param head_entities:
+        :param relations:
+        :param tail_entities:
+        :return:
+        """
+        self.forward(head_entities, relations, tail_entities)
+        return self.head_proj, self.relation_proj, self.tail_proj
 
 
 class TransHDataset(Dataset):
@@ -145,7 +141,7 @@ def train():
     return model
 
 
-def save_embesding(model: TransH):
+def save_embedding(model: TransH):
     """
     保存模型训练好的entity embedding和 relation embedding
     :param model:
@@ -156,8 +152,8 @@ def save_embesding(model: TransH):
     relation_embeddings = model.relation_embeddings.weight.data.numpy()
 
     # 假设存在实体和关系的标识符列表
-    entity_ids = ['entity1', 'entity2', 'entity3', 'entity4']
-    relation_ids = ['relation1', 'relation2']
+    entity_ids = list(entity_dict.values())
+    relation_ids = list(relation_dict.values())
 
     # 创建包含实体嵌入向量的DataFrame
     entity_df = pd.DataFrame(data=entity_embeddings, index=entity_ids)
@@ -166,8 +162,8 @@ def save_embesding(model: TransH):
     relation_df = pd.DataFrame(data=relation_embeddings, index=relation_ids)
 
     # 保存实体和关系的嵌入向量为CSV文件
-    entity_df.to_csv('entity_embeddings.csv')
-    relation_df.to_csv('relation_embeddings.csv')
+    entity_df.to_csv('data/entity_embeddings.csv')
+    relation_df.to_csv('data/relation_embeddings.csv')
 
 
 def load_model(path: str):
@@ -177,15 +173,21 @@ def load_model(path: str):
     :return:
     """
     # 加载已训练好的模型参数
-    model = TransH(4, 2, 50, 1.0)
+    model = TransH(num_entities, num_relations, embedding_dim, margin)
     model.load_state_dict(torch.load(path))
 
     return model
 
 
 def extend_model(model: TransH, num_entities: int, num_new_entities: int):
+    """
+    扩展模型，当index小于原来时，需要进行扩展
+    :param model:
+    :param num_entities:
+    :param num_new_entities:
+    :return:
+    """
     # 扩展模型的实体嵌入矩阵
-    num_new_entities = 100
     extended_entity_embeddings = nn.Embedding(num_entities + num_new_entities, embedding_dim)
     extended_relation_embeddings = nn.Embedding(num_relations, embedding_dim)
     extended_entity_embeddings.weight.data[:num_entities] = model.entity_embeddings.weight.data
@@ -206,16 +208,16 @@ def extend_model(model: TransH, num_entities: int, num_new_entities: int):
                 extended_state_dict[name] = param
 
     extended_model.load_state_dict(extended_state_dict)
-
     return extended_model
+
 
 def main():
     model = train()
-    save_embesding(model)
-    torch.save(model.state_dict(), "transH.pth")  # 保存torch
-    model = load_model("transH.pth")
+    save_embedding(model)
+    torch.save(model.state_dict(), "model/transH.pth")  # 保存torch
+    model = load_model("model/transH.pth")
 
-    loaded_model = extend_model(model, 4, 5)
+    loaded_model = extend_model(model, num_entities, 100)
 
     # 构造输入数据（新的三元组）
     new_head_entity = torch.tensor([100])
