@@ -26,7 +26,6 @@ num_relations = 2
 margin = 1.0
 
 
-
 class TransH(nn.Module):
     def __init__(self, num_entities, num_relations, embedding_dim, margin):
         super(TransH, self).__init__()
@@ -86,6 +85,31 @@ class TransH(nn.Module):
         """
         self.forward(head_entities, relations, tail_entities)
         return self.head_proj, self.relation_proj, self.tail_proj
+
+    def recommend_tail(self, head_entity_id, relation_id, top_k=5):
+        # 获取head和relation的嵌入向量
+        head_embedding = self.entity_embeddings(head_entity_id)
+        relation_embedding = self.relation_embeddings(relation_id)
+
+        # 获取所有tail实体的嵌入向量
+        all_tail_embeddings = self.entity_embeddings.weight
+
+        # 计算关系转移向量
+        relation_transfer_vector = relation_embedding - torch.sum(
+            relation_embedding * self.relation_normal_vectors(relation_id), dim=-1,
+            keepdim=True) * self.relation_normal_vectors(relation_id)
+
+        # 计算预测的tail向量
+        predicted_tail_vector = head_embedding + relation_transfer_vector
+
+        # 计算与所有tail实体的余弦相似度
+        cosine_similarities = torch.nn.functional.cosine_similarity(predicted_tail_vector, all_tail_embeddings)
+
+        # 找到与预测向量最相似的top_k个tail实体
+        _, top_k_indices = torch.topk(cosine_similarities, top_k)
+        recommended_tail_entity_ids = top_k_indices.tolist()
+
+        return recommended_tail_entity_ids
 
 
 class TransHDataset(Dataset):
@@ -199,7 +223,7 @@ def extend_model(model: TransH, num_entities: int, num_new_entities: int):
     extended_model.relation_embeddings = extended_relation_embeddings
 
     # 加载训练好的模型参数到扩展后的模型
-    loaded_state_dict = torch.load('transH.pth')
+    loaded_state_dict = torch.load('model/transH.pth')
     extended_state_dict = extended_model.state_dict()
 
     for name, param in loaded_state_dict.items():
@@ -233,6 +257,9 @@ def main():
     print("Head Entity Embedding:", head_embeddings)
     print("Relation Embedding:", relation_embeddings)
     print("Tail Entity Embedding:", tail_embeddings)
+
+    res = model.recommend_tail(torch.tensor(1), torch.tensor(0))
+    print(res)
 
 
 if __name__ == '__main__':
